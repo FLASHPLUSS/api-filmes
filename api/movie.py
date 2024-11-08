@@ -4,93 +4,104 @@ from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
-MOVIE_URL = "https://wix.maxcine.top/public/filme/"
+# URL base do endpoint de filmes por categoria
+BASE_URL = "https://wix.maxcine.top/public/filmes"
 
-def get_movies_by_category(category):
-    response = requests.get(f"https://wix.maxcine.top/public/categoria/{category}")
+# Dicionário para mapear as categorias e seus respectivos valores (ID do gênero)
+categories = {
+    "Aventura": "12",
+    "Fantasia": "14",
+    "Animação": "16",
+    "Drama": "18",
+    "Terror": "27",
+    "Ação": "28",
+    "Comédia": "35",
+    "História": "36",
+    "Faroeste": "37",
+    "Thriller": "53",
+    "Crime": "80",
+    "Documentário": "99",
+    "Ficção científica": "878",
+    "Mistério": "9648",
+    "Música": "10402",
+    "Romance": "10749",
+    "Família": "10751",
+    "Guerra": "10752",
+    "Cinema TV": "10770"
+}
+
+# Função para buscar filmes da categoria com base no ID da categoria
+def get_movies_by_category(category_id, page=1):
+    # Faz a requisição para o endpoint de filmes usando o número da página e o ID da categoria
+    params = {'page': page, 'genre': category_id}  # Passa o ID da categoria como parâmetro
+    response = requests.get(BASE_URL, params=params)
+
+    # Verifica se a resposta foi bem-sucedida
     if response.status_code != 200:
         return {"error": "Falha na requisição ao servidor"}, 500
-
+    
+    # Analisa o conteúdo HTML da página para extrair informações de cada filme
     soup = BeautifulSoup(response.text, 'html.parser')
     movies = []
+    
+    # Extrai os detalhes dos filmes da página
+    for movie_div in soup.select(".info-filme"):
+        title = movie_div.select_one(".titulo h1").get_text(strip=True)
+        rating = movie_div.select_one(".imdb p").get_text(strip=True)
+        genre = movie_div.select_one(".genres ul li strong").get_text(strip=True)
+        synopsis = movie_div.select_one(".sinopse p").get_text(strip=True)
+        year = movie_div.select_one(".informacoes li strong").get_text(strip=True)
+        duration = movie_div.select_one(".duration li strong").get_text(strip=True)
 
-    for movie_div in soup.select(".movie-item"):
-        movie_url = movie_div.select_one("a")["href"]
-        movie_id = movie_url.split('/')[-1]
-        img_url = movie_div.select_one("img")["src"]
+        # Capa do filme
+        cover_image = movie_div.select_one(".capa img")["src"]
+        
+        # Banner do filme (extraído a partir do estilo de fundo)
+        banner_style = movie_div.select_one(".poster-m")["style"]
+        banner_url = banner_style.split("url(")[1].split(")")[0].strip("'")
+
+        # Link para reprodução
+        play_url = movie_div.select_one(".play a")["href"] if movie_div.select_one(".play a") else None
+
         movies.append({
-            "titulo": movie_id,
-            "capa": img_url,
-            "url": movie_url
+            "titulo": title,
+            "avaliacao": rating,
+            "genero": genre,
+            "sinopse": synopsis,
+            "ano": year,
+            "duracao": duration,
+            "capa": cover_image,
+            "banner": banner_url,
+            "play_url": play_url
         })
-
+    
     return movies
 
-def search_movies(query):
-    response = requests.get(f"https://wix.maxcine.top/public/pesquisa?search={query}")
-    if response.status_code != 200:
-        return {"error": "Falha na requisição ao servidor"}, 500
-
-    soup = BeautifulSoup(response.text, 'html.parser')
-    movies = []
-
-    for movie_div in soup.select(".suggested-item"):
-        movie_url = movie_div.select_one("a")["href"]
-        movie_id = movie_url.split('/')[-1]
-        img_url = movie_div.select_one("img")["src"]
-        movies.append({
-            "titulo": movie_id,
-            "capa": img_url,
-            "url": movie_url
-        })
-
-    return movies
-
-@app.route('/api/category/<category>', methods=['GET'])
-def api_get_category(category):
-    movies = get_movies_by_category(category)
+# Rota da API para buscar filmes por categoria e página
+@app.route('/api/get_by_category', methods=['GET'])
+def api_get_by_category():
+    # A categoria é enviada como um parâmetro na URL
+    category = request.args.get('category')
+    page = request.args.get('page', 1)  # Define a página como 1 por padrão
+    
+    if not category:
+        return jsonify({"error": "Nenhuma categoria fornecida."}), 400
+    
+    # Verifica se a categoria fornecida está no dicionário 'categories'
+    category_id = categories.get(category)
+    
+    if not category_id:
+        return jsonify({"error": "Categoria inválida."}), 400
+    
+    # Busca os filmes da categoria e página especificadas
+    movies = get_movies_by_category(category_id, page)
     return jsonify(movies)
 
-@app.route('/api/search', methods=['GET'])
-def api_search():
-    query = request.args.get('query')
-    if not query:
-        return jsonify({"error": "Nenhum termo de pesquisa fornecido"}), 400
-    movies = search_movies(query)
-    return jsonify(movies)
+# Rota da API para listar todas as categorias
+@app.route('/api/categories', methods=['GET'])
+def api_get_categories():
+    return jsonify(list(categories.keys()))
 
-def get_movie_details(movie_id):
-    response = requests.get(MOVIE_URL + movie_id)
-    if response.status_code != 200:
-        return {"error": "Falha na requisição ao servidor"}, 500
-
-    soup = BeautifulSoup(response.text, 'html.parser')
-
-    title = soup.select_one(".titulo h1").get_text(strip=True) if soup.select_one(".titulo h1") else None
-    rating = soup.select_one(".imdb p").get_text(strip=True) if soup.select_one(".imdb p") else None
-    genre = soup.select_one(".genres ul li strong").get_text(strip=True) if soup.select_one(".genres ul li strong") else None
-    synopsis = soup.select_one(".sinopse p").get_text(strip=True) if soup.select_one(".sinopse p") else None
-    year = soup.select_one(".informacoes li strong").get_text(strip=True) if soup.select_one(".informacoes li strong") else None
-    duration = soup.select_one(".duration li strong").get_text(strip=True) if soup.select_one(".duration li strong") else None
-    banner = soup.select_one(".poster-m").get("style") if soup.select_one(".poster-m") else None
-    banner_url = banner.split("url('")[1].split("')")[0] if banner else None
-
-    movie_details = {
-        "titulo": title,
-        "avaliacao": rating,
-        "genero": genre,
-        "sinopse": synopsis,
-        "ano": year,
-        "duracao": duration,
-        "banner": banner_url
-    }
-
-    return movie_details
-
-@app.route('/api/movie/<movie_id>', methods=['GET'])
-def api_get_movie(movie_id):
-    movie_details = get_movie_details(movie_id)
-    return jsonify(movie_details)
-
+# Inicia o servidor Flask
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host="0.0.0.0", port=5000)
